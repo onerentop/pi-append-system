@@ -1,6 +1,6 @@
 {
 	"name": "pi-append-system",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"description": "Pi extension. Add, toggle and remove system-prompt append rules at runtime — no file editing, no /reload.",
 	"keywords": [
 		"pi-package",

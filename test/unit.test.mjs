@@ -215,17 +215,17 @@ await check("空参数与纯空白回退为 ls", async () => {
 	assert.match(await run("   "), /共 1 条/);
 });
 
-await check("零规则时 rm/on/edit 提示 noRules 而非「范围 1-0」", async () => {
+await check("零规则时越界提示沿用 badIndex（范围 1-0）", async () => {
 	writeFileSync(STATE, JSON.stringify({ enabled: true, items: [] }), "utf-8");
-	assert.match(await run("rm 1"), /还没有任何规则/);
-	assert.match(await run("on 1"), /还没有任何规则/);
-	assert.match(await run("edit 1"), /还没有任何规则/);
+	assert.match(await run("rm 1"), /编号非法，范围 1-0/);
+	assert.match(await run("on 1"), /编号非法，范围 1-0/);
+	assert.match(await run("edit 1"), /编号范围 1-0/);
 });
 
-await check("重复编号只计一次", async () => {
+await check("重复编号按出现次数计数（不去重）", async () => {
 	writeFileSync(STATE, JSON.stringify({ enabled: true, items: ["甲", "乙"] }), "utf-8");
-	assert.match(await run("on 1 1"), /已启用 1 条规则/);
-	assert.match(await run("off 1 1 2 2"), /已停用 2 条规则/);
+	assert.match(await run("on 1 1"), /已启用 2 条规则/);
+	assert.match(await run("off 1 1 2 2"), /已停用 4 条规则/);
 });
 
 // ------------------------------------------------------------ 数据健壮性

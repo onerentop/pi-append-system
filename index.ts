@@ -88,7 +88,6 @@ const zh = {
 	usageEdit: (max: number) => `用法：/append-system edit <编号>，编号范围 1-${max}`,
 	usageRm: (max: number) => `用法：/append-system rm <编号>，编号范围 1-${max}`,
 	badIndex: (max: number) => `编号非法，范围 1-${max}`,
-	noRules: "还没有任何规则，用 /append-system add 添加",
 	switchedOn: "追加规则注入已开启",
 	switchedOff: "追加规则注入已关闭",
 	toggledOn: (n: number) => `已启用 ${n} 条规则`,
@@ -133,7 +132,6 @@ const en: typeof zh = {
 	usageEdit: (max) => `Usage: /append-system edit <N>, N in 1-${max}`,
 	usageRm: (max) => `Usage: /append-system rm <N>, N in 1-${max}`,
 	badIndex: (max) => `Invalid index, expected 1-${max}`,
-	noRules: "No rules yet — add one with /append-system add",
 	switchedOn: "Append-rule injection enabled",
 	switchedOff: "Append-rule injection disabled",
 	toggledOn: (n) => `Enabled ${n} rule(s)`,
@@ -219,16 +217,13 @@ function normalizeInput(raw: string): string {
 	return text.replace(/\\n/g, "\n").trim();
 }
 
-/** 只接受纯十进制整数，挡掉 0x2 / 1e2 / 1.0 这类 Number() 会接受的写法；重复编号只算一次。 */
+/** 只接受纯十进制整数，挡掉 0x2 / 1e2 / 1.0 这类 Number() 会接受的写法。 */
 function selectItems(tokens: string[], items: Item[]): Selection[] | null {
 	const selected: Selection[] = [];
-	const seen = new Set<number>();
 	for (const token of tokens) {
 		if (!/^\d+$/.test(token)) return null;
 		const n = Number(token);
 		if (n < 1 || n > items.length) return null;
-		if (seen.has(n)) continue;
-		seen.add(n);
 		const item = items[n - 1];
 		if (item) selected.push({ index: n - 1, item });
 	}
@@ -332,10 +327,7 @@ export default function appendSystemExtension(pi: ExtensionAPI) {
 					let text = normalizeInput(editMatch?.[2] ?? "");
 					const selection = selectItems([numberToken], state.items)?.[0];
 					if (!selection) {
-						ctx.ui.notify(
-							state.items.length === 0 ? t().noRules : t().usageEdit(state.items.length),
-							"error",
-						);
+						ctx.ui.notify(t().usageEdit(state.items.length), "error");
 						return;
 					}
 					if (!text) {
@@ -364,10 +356,7 @@ export default function appendSystemExtension(pi: ExtensionAPI) {
 					}
 					const selection = selectItems(tokens, state.items);
 					if (!selection) {
-						ctx.ui.notify(
-							state.items.length === 0 ? t().noRules : t().badIndex(state.items.length),
-							"error",
-						);
+						ctx.ui.notify(t().badIndex(state.items.length), "error");
 						return;
 					}
 					const removed = new Set(selection.map((entry) => entry.item));
@@ -390,10 +379,7 @@ export default function appendSystemExtension(pi: ExtensionAPI) {
 					}
 					const selection = selectItems(rest.split(/\s+/).filter(Boolean), state.items);
 					if (!selection) {
-						ctx.ui.notify(
-							state.items.length === 0 ? t().noRules : t().badIndex(state.items.length),
-							"error",
-						);
+						ctx.ui.notify(t().badIndex(state.items.length), "error");
 						return;
 					}
 					for (const entry of selection) entry.item.enabled = enable;

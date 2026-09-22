@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.1
+
+- restore the original command behavior in two places that were changed during
+  the 1.0.0 review pass: out-of-range messages keep the `1-N` wording (which
+  reads `1-0` when there are no rules), and repeated indexes count once per
+  occurrence instead of being deduplicated
+
 ## 1.0.0
 
 Initial release.
