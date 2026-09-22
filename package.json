@@ -1,6 +1,6 @@
 {
 	"name": "pi-append-system",
-	"version": "2.0.0",
+	"version": "2.0.1",
 	"description": "Pi extension. Manage the rules in pi's native APPEND_SYSTEM.md — add, edit, delete and toggle from a command.",
 	"keywords": [
 		"pi-package",

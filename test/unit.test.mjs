@@ -214,6 +214,25 @@ await check("空参数回退为 ls", async () => {
 	assert.match(await run("   "), /共 1 条/);
 });
 
+await check("子命令补全带说明且大小写不敏感", async () => {
+	const all = cmd.getArgumentCompletions("");
+	assert.deepEqual(
+		all.map((i) => i.value),
+		["ls", "add", "edit", "rm", "on", "off", "clear", "help"],
+	);
+	assert.ok(
+		all.every((i) => typeof i.description === "string" && i.description.length > 0),
+		"每个子命令都应带说明文字",
+	);
+	assert.deepEqual(cmd.getArgumentCompletions("R").map((i) => i.value), ["rm"]);
+	assert.deepEqual(cmd.getArgumentCompletions("a").map((i) => i.value), ["add"]);
+	assert.equal(cmd.getArgumentCompletions("zzz"), null);
+});
+
+await check("命令描述列出所有子命令（让菜单里能一眼看到）", async () => {
+	assert.match(cmd.description, /ls add edit rm on off clear help/);
+});
+
 // ------------------------------------------------------------ 数据健壮性
 
 await check("clear 拒绝确认时保留数据", async () => {
@@ -302,6 +321,11 @@ await check("英文环境命令与列表用英文", async () => {
 	writeFileSync(STATE, JSON.stringify({ enabled: true, items: ["x"] }), "utf-8");
 	assert.match(await run("ls"), /Rules \(inject: on\)/);
 	assert.match(await run('add "y"'), /\/reload to apply/);
+	assert.match(
+		cmd.getArgumentCompletions("off")[0].description,
+		/global off/,
+		"英文环境下补全说明也应是英文",
+	);
 });
 
 await check("LANG 未设置默认英文；LC_ALL 优先", async () => {

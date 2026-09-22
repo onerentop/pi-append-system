@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.1
+
+- subcommand completions now carry a one-line description each, so typing
+  `/append-system ` shows what every subcommand does
+- the command description lists all subcommands (`ls add edit rm on off clear
+  help`), because pi only shows the command line itself until you type a space —
+  extension commands have no `argumentHint` support in pi
+
 ## 2.0.0
 
 **BREAKING — the mechanism changed.** The extension now manages pi's native

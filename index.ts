@@ -60,7 +60,15 @@ function detectLang(): Lang {
 }
 
 const zh = {
-	commandDescription: "管理 APPEND_SYSTEM.md 的规则（增删启停，/reload 生效）",
+	commandDescription: "管理 APPEND_SYSTEM.md 的规则：ls add edit rm on off clear help（/reload 生效）",
+	subLs: "列出所有规则",
+	subAdd: "新增并启用（可带文本，或打开编辑器）",
+	subEdit: "修改第 N 条，或查看全文",
+	subRm: "删除一条或多条",
+	subOn: "启用（不带编号＝全局开启）",
+	subOff: "停用（不带编号＝全局关闭）",
+	subClear: "清空全部规则",
+	subHelp: "用法说明",
 	listEmpty: (sw: string) => `规则为空（注入开关：${sw}）\n用 /append-system add "你的规则" 添加`,
 	listHeader: (sw: string, total: number, active: number) =>
 		`规则（注入开关：${sw}）—— 共 ${total} 条，启用 ${active} 条`,
@@ -107,7 +115,15 @@ const zh = {
 };
 
 const en: typeof zh = {
-	commandDescription: "Manage APPEND_SYSTEM.md rules (add/toggle/remove, applied on /reload)",
+	commandDescription: "Manage APPEND_SYSTEM.md rules: ls add edit rm on off clear help (/reload to apply)",
+	subLs: "list all rules",
+	subAdd: "add and enable (text, or open the editor)",
+	subEdit: "edit rule N, or view its full text",
+	subRm: "delete one or more",
+	subOn: "enable (no number = global on)",
+	subOff: "disable (no number = global off)",
+	subClear: "delete all rules",
+	subHelp: "usage",
 	listEmpty: (sw) => `No rules (inject: ${sw})\nAdd one with /append-system add "your rule"`,
 	listHeader: (sw, total, active) => `Rules (inject: ${sw}) — ${total} total, ${active} active`,
 	listFooter: "rm N delete · on/off N toggle one · on/off global switch · edit N edit/view · /reload to apply",
@@ -316,9 +332,21 @@ export default function appendSystemExtension(pi: ExtensionAPI) {
 	pi.registerCommand("append-system", {
 		description: t().commandDescription,
 		getArgumentCompletions: (prefix) => {
-			const subs = ["ls", "add", "edit", "rm", "on", "off", "clear", "help"];
+			const m = t();
+			const subs: Array<[string, string]> = [
+				["ls", m.subLs],
+				["add", m.subAdd],
+				["edit", m.subEdit],
+				["rm", m.subRm],
+				["on", m.subOn],
+				["off", m.subOff],
+				["clear", m.subClear],
+				["help", m.subHelp],
+			];
 			const lower = prefix.toLowerCase();
-			const items = subs.filter((s) => s.startsWith(lower)).map((s) => ({ value: s, label: s }));
+			const items = subs
+				.filter(([name]) => name.startsWith(lower))
+				.map(([name, description]) => ({ value: name, label: name, description }));
 			return items.length > 0 ? items : null;
 		},
 		handler: async (args, ctx) => {
