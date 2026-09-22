@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # 每周跑一次，用最新的 pi 验证内部 API 是否仍然兼容
+  schedule:
+    - cron: "0 6 * * 1"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      # 定时任务用上游最新 pi 覆盖锁定的版本，
+      # test/render.test.mjs 会走 pi 的真实加载与渲染链路，兼容性破坏会在这里暴露
+      - name: Track upstream pi (scheduled runs only)
+        if: github.event_name == 'schedule'
+        run: npm install --no-save @earendil-works/pi-coding-agent@latest
+
+      - name: Type check
+        run: npm run check
+
+      - name: Test
+        run: npm test

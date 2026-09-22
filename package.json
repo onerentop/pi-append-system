@@ -1,0 +1,49 @@
+{
+	"name": "pi-append-system",
+	"version": "1.0.0",
+	"description": "Pi extension. Add, toggle and remove system-prompt append rules at runtime — no file editing, no /reload.",
+	"keywords": [
+		"pi-package",
+		"pi-extension",
+		"system-prompt",
+		"append-system",
+		"context-engineering"
+	],
+	"type": "module",
+	"license": "MIT",
+	"author": "onerentop",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/onerentop/pi-append-system.git"
+	},
+	"homepage": "https://github.com/onerentop/pi-append-system#readme",
+	"bugs": {
+		"url": "https://github.com/onerentop/pi-append-system/issues"
+	},
+	"files": [
+		"index.ts",
+		"README.md",
+		"CHANGELOG.md",
+		"LICENSE"
+	],
+	"pi": {
+		"extensions": [
+			"./index.ts"
+		]
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*"
+	},
+	"devDependencies": {
+		"@earendil-works/pi-coding-agent": "0.87.0",
+		"@types/node": "^22.0.0",
+		"typescript": "^5.0.0"
+	},
+	"scripts": {
+		"check": "tsc --noEmit",
+		"test": "node test/unit.test.mjs && node test/render.test.mjs"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	}
+}
