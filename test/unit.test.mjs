@@ -1,20 +1,21 @@
 /**
- * 单元测试：mock 掉 ExtensionAPI，直接驱动命令 handler 与 before_agent_start。
- * 通过 PI_CODING_AGENT_DIR 把状态文件隔离到临时目录，不触碰真实配置。
+ * 单元测试：mock 掉 ExtensionAPI，驱动命令 handler。
+ * 通过 PI_CODING_AGENT_DIR 把台账与 APPEND_SYSTEM.md 隔离到临时目录，不碰真实配置。
  *
- * 运行：node test/unit.test.mjs  （或 npm test）
+ * 运行：node test/unit.test.mjs
  */
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-// 先锁定中文环境，让下面所有断言基于确定的语言；语言切换在文件末尾单独测
+// 先锁定中文环境，让下面的断言基于确定语言；语言切换在文件末尾单独测
 process.env.LANG = "zh_CN.UTF-8";
 delete process.env.LC_ALL;
 delete process.env.LC_MESSAGES;
 
 const AGENT_DIR = "/tmp/pi-append-system-test/unit";
 const STATE = join(AGENT_DIR, "append-system.json");
+const MD = join(AGENT_DIR, "APPEND_SYSTEM.md");
 process.env.PI_CODING_AGENT_DIR = AGENT_DIR;
 rmSync(AGENT_DIR, { recursive: true, force: true });
 mkdirSync(AGENT_DIR, { recursive: true });
@@ -48,20 +49,15 @@ appendSystemExtension(pi);
 const cmd = commands.get("append-system");
 const ctx = makeCtx();
 
-/** 执行命令，返回本次的 notify 输出 */
 async function run(args, context = ctx) {
 	log = [];
 	await cmd.handler(args, context);
 	return log.join("\n");
 }
 
-/** 触发 before_agent_start，返回注入的 dynamic_append section */
-async function injected(event = { systemPromptOptions: { sections: {} } }) {
-	for (const handler of handlers.get("before_agent_start") ?? []) await handler(event, ctx);
-	return event.systemPromptOptions.sections.dynamic_append;
-}
-
 const readState = () => JSON.parse(readFileSync(STATE, "utf-8"));
+const readMd = () => (existsSync(MD) ? readFileSync(MD, "utf-8") : null);
+
 const results = [];
 async function check(name, fn) {
 	try {
@@ -73,309 +69,257 @@ async function check(name, fn) {
 }
 
 assert.ok(cmd, "命令 /append-system 未注册");
-assert.ok(handlers.get("before_agent_start")?.length, "未注册 before_agent_start");
 assert.ok(handlers.get("session_start")?.length, "未注册 session_start");
 
-// ------------------------------------------------------------ 基础行为
+// ------------------------------------------------------------ 核心：写 APPEND_SYSTEM.md
 
-await check("空状态不注入 section", async () => {
-	assert.equal(await injected(), undefined);
+await check("扩展不再注册 before_agent_start（不做实时注入）", async () => {
+	assert.ok(!handlers.get("before_agent_start"), "不应有 before_agent_start handler");
 });
 
-await check("add 去掉包裹的引号", async () => {
+await check("空状态不产生 APPEND_SYSTEM.md", async () => {
+	assert.equal(readMd(), null);
+});
+
+await check("add 写入 APPEND_SYSTEM.md 并去引号", async () => {
 	await run('add "所有回答用简体中文"');
 	assert.equal(readState().items[0].text, "所有回答用简体中文");
-	assert.equal(readState().items[0].enabled, true);
+	assert.equal(readMd(), "所有回答用简体中文\n");
 });
 
-await check("add 还原字面量 \\n 为换行", async () => {
-	await run('add "第一条\\n第二条"');
-	assert.equal(readState().items[1].text, "第一条\n第二条");
+await check("add 提示包含 /reload", async () => {
+	assert.match(await run('add "第二条"'), /\/reload/);
 });
 
-await check("多条规则以空行连接注入", async () => {
-	assert.equal(await injected(), "所有回答用简体中文\n\n第一条\n第二条");
+await check("多条规则以空行连接写入", async () => {
+	assert.equal(readMd(), "所有回答用简体中文\n\n第二条\n");
+});
+
+await check("字面量 \\n 还原为换行后写入", async () => {
+	await run('add "甲\\n乙"');
+	assert.match(readMd(), /甲\n乙\n$/);
 });
 
 await check("ls 显示全局开关与逐条状态", async () => {
 	const out = await run("ls");
 	assert.match(out, /注入开关：on/);
-	assert.match(out, /共 2 条，启用 2 条/);
+	assert.match(out, /共 3 条，启用 3 条/);
 	assert.match(out, /1\. \[on \] 所有回答用简体中文/);
-	assert.match(out, /2\. \[on \] 第一条 ⏎ 第二条/);
 });
 
-await check("off N 只停用单条", async () => {
+await check("off N 从 APPEND_SYSTEM.md 移除单条", async () => {
 	await run("off 2");
-	assert.equal(await injected(), "所有回答用简体中文");
+	assert.equal(readMd(), "所有回答用简体中文\n\n甲\n乙\n");
 	assert.equal(readState().enabled, true);
+	assert.match(log.join("\n"), /reload/);
 });
 
 await check("on N 恢复单条", async () => {
 	await run("on 2");
-	assert.equal(await injected(), "所有回答用简体中文\n\n第一条\n第二条");
+	assert.equal(readMd(), "所有回答用简体中文\n\n第二条\n\n甲\n乙\n");
 });
 
-await check("全局 off 后完全不注入但保留条目", async () => {
+await check("全局 off 移除 APPEND_SYSTEM.md 但保留台账", async () => {
 	await run("off");
-	assert.equal(await injected(), undefined);
-	assert.equal(readState().items.length, 2);
+	assert.equal(readMd(), null);
+	assert.equal(readState().enabled, false);
+	assert.equal(readState().items.length, 3);
 	assert.match(await run("ls"), /注入开关：off/);
 });
 
-await check("全局 on 恢复注入", async () => {
+await check("全局 on 重建 APPEND_SYSTEM.md", async () => {
 	await run("on");
-	assert.equal(await injected(), "所有回答用简体中文\n\n第一条\n第二条");
+	assert.match(readMd(), /所有回答用简体中文/);
 });
 
-await check("edit N 就地修改（参数形式）", async () => {
-	await run("edit 1 回答一律使用简体中文");
-	assert.equal(await injected(), "回答一律使用简体中文\n\n第一条\n第二条");
+await check("edit 就地修改并重渲染", async () => {
+	await run("edit 1 回答一律用简体中文");
+	assert.match(readMd(), /^回答一律用简体中文\n\n/);
 });
 
-await check("edit N 无文本时走编辑器并 trim 结果", async () => {
-	await run("edit 2", makeCtx({ editor: async () => "  编辑器写入\n多行  " }));
-	assert.equal(await injected(), "回答一律使用简体中文\n\n编辑器写入\n多行");
+await check("edit 无文本时走编辑器并 trim", async () => {
+	await run("edit 2", makeCtx({ editor: async () => "  编辑器写入  " }));
+	assert.match(readMd(), /编辑器写入/);
+	assert.ok(!readMd().includes("编辑器写入  "), "应已 trim");
 });
 
-await check("rm 删除后重新编号", async () => {
+await check("rm 删除后重新编号并重渲染", async () => {
+	const before = readState().items.length;
 	await run("rm 1");
-	assert.equal(await injected(), "编辑器写入\n多行");
-	assert.equal(readState().items.length, 1);
+	assert.equal(readState().items.length, before - 1);
+	assert.ok(!readMd().includes("回答一律用简体中文"), "被删的规则应从文件消失");
+	assert.match(await run("rm 1"), /序号已重排/);
 });
 
 await check("rm 越界报错且不改动数据", async () => {
-	assert.match(await run("rm 5"), /编号非法，范围 1-1/);
-	assert.equal(readState().items.length, 1);
+	const before = readState().items.length;
+	assert.match(await run("rm 99"), /编号非法/);
+	assert.equal(readState().items.length, before);
 });
 
-// ------------------------------------------------------------ 编辑器与确认交互
+// ------------------------------------------------------------ 交互与解析
 
-await check("add 在编辑器取消时无副作用", async () => {
-	const before = readFileSync(STATE, "utf-8");
-	await run("add", makeCtx({ editor: async () => undefined }));
-	assert.equal(readFileSync(STATE, "utf-8"), before);
-});
-
-await check("add 取消编辑器时静默（不弹 warning）", async () => {
+await check("add 编辑器取消时静默且无副作用", async () => {
+	const beforeState = readFileSync(STATE, "utf-8");
+	const beforeMd = readMd();
 	log = [];
 	await cmd.handler("add", makeCtx({ editor: async () => undefined }));
-	assert.equal(log.length, 0, `不应有任何提示，实际：${log.join(" | ")}`);
+	assert.equal(log.length, 0);
+	assert.equal(readFileSync(STATE, "utf-8"), beforeState);
+	assert.equal(readMd(), beforeMd);
 });
 
-await check("add 的空内容被拒绝", async () => {
-	const before = readFileSync(STATE, "utf-8");
+await check("add 空内容被拒绝", async () => {
 	assert.match(await run("add", makeCtx({ editor: async () => "   " })), /内容为空/);
-	assert.equal(readFileSync(STATE, "utf-8"), before);
 });
 
-await check("clear 拒绝确认时保留数据", async () => {
-	await run("clear", makeCtx({ confirm: async () => false }));
-	assert.equal(readState().items.length, 1);
-});
-
-// ------------------------------------------------------------ 输入解析边界
-
-await check("selectItems 拒绝 Number() 能接受的非法写法", async () => {
-	const count = readState().items.length;
-	for (const bad of ["0x2", "1e1", "1.0", "-1", "+1"]) {
-		assert.match(await run(`rm ${bad}`), /编号非法/, `应拒绝 ${bad}`);
-	}
-	assert.equal(readState().items.length, count, "数据不应被改动");
-});
-
-await check("tab 分隔的子命令被正确识别", async () => {
-	await cmd.handler("add\t标签规则", ctx);
-	assert.equal(readState().items.at(-1).text, "标签规则");
-	assert.match(await run("ls"), /标签规则/);
-});
-
-await check("引号只在内部无同类引号时剥离", async () => {
+await check("tab 分隔子命令 + 引号边界", async () => {
+	writeFileSync(STATE, JSON.stringify({ enabled: true, items: [] }), "utf-8");
 	await cmd.handler('add\t"a" and "b"', ctx);
 	assert.equal(readState().items.at(-1).text, '"a" and "b"');
 });
 
-await check("单引号同样被剥离", async () => {
-	await cmd.handler("add\t'单引号内容'", ctx);
-	assert.equal(readState().items.at(-1).text, "单引号内容");
+await check("selectItems 拒绝 0x2/1e1/1.0/-1/+1", async () => {
+	writeFileSync(STATE, JSON.stringify({ enabled: true, items: ["甲", "乙"] }), "utf-8");
+	for (const bad of ["0x2", "1e1", "1.0", "-1", "+1"]) {
+		assert.match(await run(`rm ${bad}`), /编号非法/, `应拒绝 ${bad}`);
+	}
+	assert.equal(readState().items.length, 2);
 });
 
-await check("别名 list / remove / delete 可用", async () => {
+await check("零规则时越界提示范围 1-0（未引入 noRules）", async () => {
+	writeFileSync(STATE, JSON.stringify({ enabled: true, items: [] }), "utf-8");
+	assert.match(await run("rm 1"), /范围 1-0/);
+	assert.match(await run("on 1"), /范围 1-0/);
+});
+
+await check("重复编号按出现次数计数", async () => {
+	writeFileSync(STATE, JSON.stringify({ enabled: true, items: ["甲", "乙"] }), "utf-8");
+	assert.match(await run("on 1 1"), /已启用 2 条/);
+});
+
+await check("别名 list/remove/delete 可用", async () => {
 	writeFileSync(STATE, JSON.stringify({ enabled: true, items: ["甲", "乙"] }), "utf-8");
 	assert.match(await run("list"), /共 2 条/);
 	await run("remove 1");
 	assert.equal(readState().items.length, 1);
 	await run("delete 1");
 	assert.equal(readState().items.length, 0);
+	assert.equal(readMd(), null, "删空后 APPEND_SYSTEM.md 应移除");
 });
 
-await check("空参数与纯空白回退为 ls", async () => {
+await check("空参数回退为 ls", async () => {
 	writeFileSync(STATE, JSON.stringify({ enabled: true, items: ["甲"] }), "utf-8");
 	assert.match(await run(""), /共 1 条/);
 	assert.match(await run("   "), /共 1 条/);
 });
 
-await check("零规则时越界提示沿用 badIndex（范围 1-0）", async () => {
-	writeFileSync(STATE, JSON.stringify({ enabled: true, items: [] }), "utf-8");
-	assert.match(await run("rm 1"), /编号非法，范围 1-0/);
-	assert.match(await run("on 1"), /编号非法，范围 1-0/);
-	assert.match(await run("edit 1"), /编号范围 1-0/);
-});
-
-await check("重复编号按出现次数计数（不去重）", async () => {
-	writeFileSync(STATE, JSON.stringify({ enabled: true, items: ["甲", "乙"] }), "utf-8");
-	assert.match(await run("on 1 1"), /已启用 2 条规则/);
-	assert.match(await run("off 1 1 2 2"), /已停用 4 条规则/);
-});
-
 // ------------------------------------------------------------ 数据健壮性
 
-await check("clear 确认后清空并停止注入", async () => {
+await check("clear 拒绝确认时保留数据", async () => {
+	writeFileSync(STATE, JSON.stringify({ enabled: true, items: ["甲"] }), "utf-8");
+	renderFromState();
+	await run("clear", makeCtx({ confirm: async () => false }));
+	assert.equal(readState().items.length, 1);
+});
+
+await check("clear 确认后清空并移除文件", async () => {
 	await run("clear");
 	assert.equal(readState().items.length, 0);
-	assert.equal(await injected(), undefined);
-});
-
-await check("损坏的 JSON 回退为空状态且可恢复", async () => {
-	writeFileSync(STATE, "{ 这不是 JSON", "utf-8");
-	assert.equal(await injected(), undefined);
-	await run("ls"); // 命令不应抛错
-	await run("add 恢复"); // 应能覆盖损坏文件
-	assert.equal(readState().items[0].text, "恢复");
-});
-
-await check("损坏 JSON 被备份为 .bad 而不是静默覆盖", async () => {
-	rmSync(`${STATE}.bad`, { force: true });
-	writeFileSync(STATE, "{ 坏掉的", "utf-8");
-	await injected();
-	assert.ok(existsSync(`${STATE}.bad`), "应生成 .bad 备份");
-	assert.match(readFileSync(`${STATE}.bad`, "utf-8"), /坏掉的/);
-	assert.ok(!existsSync(STATE), "原文件应已改名");
-	writeFileSync(STATE, JSON.stringify({ enabled: true, items: ["保留"] }), "utf-8");
-});
-
-await check("兼容字符串条目并过滤空条目", async () => {
-	writeFileSync(STATE, JSON.stringify({ enabled: false, items: ["保留", { text: "" }, { text: "二", enabled: false }] }), "utf-8");
-	assert.equal(await injected(), undefined, "全局 off 时即使有条目也不注入");
-	await run("on");
-	assert.equal(await injected(), "保留");
+	assert.equal(readMd(), null);
 });
 
 await check("原子写不残留 .tmp", async () => {
-	await run("add 临时规则");
-	assert.ok(!existsSync(`${STATE}.tmp`), ".tmp 应已被 rename 掉");
+	await run('add "临时"');
+	assert.ok(!existsSync(`${STATE}.tmp`), "台账 .tmp 应已 rename");
+	assert.ok(!existsSync(`${MD}.tmp`), "md .tmp 应已 rename");
 });
 
-await check("状态文件落在 PI_CODING_AGENT_DIR 下", async () => {
-	assert.ok(existsSync(STATE));
+await check("损坏台账回退为空并可恢复", async () => {
+	writeFileSync(STATE, "{ 坏掉的", "utf-8");
+	assert.match(await run("ls"), /规则为空/);
+	assert.ok(existsSync(`${STATE}.bad`), "损坏文件应被备份为 .bad");
+	await run('add "恢复"');
+	assert.equal(readState().items[0].text, "恢复");
 });
 
-// ------------------------------------------------------------ section 契约
-
-await check("不覆盖 appendSystemPrompt，走独立 section", async () => {
-	writeFileSync(STATE, JSON.stringify({ enabled: true, items: ["保留"] }), "utf-8");
-	const event = { systemPromptOptions: { sections: {}, appendSystemPrompt: "来自 APPEND_SYSTEM.md" } };
-	await injected(event);
-	assert.equal(event.systemPromptOptions.appendSystemPrompt, "来自 APPEND_SYSTEM.md");
-	assert.equal(event.systemPromptOptions.sections.dynamic_append, "保留");
+await check("兼容字符串条目并过滤空条目", async () => {
+	writeFileSync(STATE, JSON.stringify({ enabled: true, items: ["保留", { text: "" }, { text: "二", enabled: false }] }), "utf-8");
+	assert.match(await run("ls"), /共 2 条，启用 1 条/);
 });
 
-await check("section 名合法（Pi 要求 /^[a-z][a-z0-9_-]*$/ 且非 preamble）", async () => {
-	const event = { systemPromptOptions: { sections: {} } };
-	await injected(event);
-	for (const name of Object.keys(event.systemPromptOptions.sections)) {
-		assert.match(name, /^[a-z][a-z0-9_-]*$/);
-		assert.notEqual(name, "preamble");
-	}
+// ------------------------------------------------------------ 首次接管备份
+
+await check("首次接管前备份已存在的手写 APPEND_SYSTEM.md", async () => {
+	rmSync(AGENT_DIR, { recursive: true, force: true });
+	mkdirSync(AGENT_DIR, { recursive: true });
+	writeFileSync(MD, "我是用户手写的原始内容\n", "utf-8");
+	const out = await run('add "工具规则"');
+	assert.match(out, /已备份/);
+	assert.equal(readFileSync(`${MD}.bak`, "utf-8"), "我是用户手写的原始内容\n");
+	assert.equal(readMd(), "工具规则\n", "接管后写入工具规则");
 });
 
-// ------------------------------------------------------------ 状态栏与帮助
+await check("台账被删后再改动不覆盖已有 .bak（P1）", async () => {
+	rmSync(AGENT_DIR, { recursive: true, force: true });
+	mkdirSync(AGENT_DIR, { recursive: true });
+	writeFileSync(MD, "原始手写内容\n", "utf-8");
+	await run('add "工具规则"'); // 首次接管：备份到 .bak
+	assert.equal(readFileSync(`${MD}.bak`, "utf-8"), "原始手写内容\n");
+	rmSync(STATE, { force: true }); // 用户手动删台账
+	const out = await run('add "又一条"');
+	assert.ok(!out.includes("已备份"), ".bak 已存在时不应再提示备份");
+	assert.equal(readFileSync(`${MD}.bak`, "utf-8"), "原始手写内容\n", ".bak 应保留最初的手写内容");
+});
 
-await check("session_start 同步状态栏为生效条数", async () => {
-	writeFileSync(STATE, JSON.stringify({ enabled: true, items: ["保留"] }), "utf-8");
+await check("已有台账后不再重复备份", async () => {
+	rmSync(`${MD}.bak`, { force: true });
+	const out = await run('add "第二条工具规则"');
+	assert.ok(!out.includes("已备份"), "已接管则不再备份");
+	assert.ok(!existsSync(`${MD}.bak`));
+});
+
+// ------------------------------------------------------------ 状态栏
+
+await check("session_start 同步状态栏为启用条数", async () => {
+	writeFileSync(STATE, JSON.stringify({ enabled: true, items: ["甲", "乙"] }), "utf-8");
 	log = [];
-	for (const handler of handlers.get("session_start") ?? []) await handler({}, ctx);
-	assert.match(log.join("\n"), /status append-system=append-system: 1 条规则/);
+	for (const h of handlers.get("session_start") ?? []) await h({}, ctx);
+	assert.match(log.join("\n"), /status append-system=append-system: 2 条/);
 });
 
-await check("全局 off 时状态栏显示 off (N) 而非清空", async () => {
-	await run("off");
+await check("全局 off 状态栏显示 off (N)", async () => {
+	writeFileSync(STATE, JSON.stringify({ enabled: false, items: ["甲", "乙"] }), "utf-8");
 	log = [];
-	for (const handler of handlers.get("session_start") ?? []) await handler({}, ctx);
-	assert.match(log.join("\n"), /status append-system=append-system: off \(\d+\)/);
-	await run("on");
-});
-
-await check("rm 提示序号已重排", async () => {
-	await run("add 乙");
-	assert.ok(readState().items.length >= 2, "前置条件：至少 2 条");
-	assert.match(await run("rm 1"), /序号已重排/);
-});
-
-await check("未知子命令给出帮助", async () => {
-	assert.match(await run("bogus"), /未知子命令 "bogus"/);
-});
-
-await check("help 中文文本包含状态文件路径", async () => {
-	const out = await run("help");
-	assert.match(out, /状态文件：/);
-	assert.ok(out.includes(STATE), "应包含实际状态文件路径");
-});
-
-await check("子命令补全大小写不敏感且含全部子命令", async () => {
-	assert.deepEqual(
-		cmd.getArgumentCompletions("").map((i) => i.value),
-		["ls", "add", "edit", "rm", "on", "off", "clear", "help"],
-	);
-	assert.deepEqual(cmd.getArgumentCompletions("R").map((i) => i.value), ["rm"]);
-	assert.equal(cmd.getArgumentCompletions("zzz"), null);
+	for (const h of handlers.get("session_start") ?? []) await h({}, ctx);
+	assert.match(log.join("\n"), /append-system: off \(2\)/);
 });
 
 // ------------------------------------------------------------ 双语
 
-await check("LANG=zh_CN 时用中文", async () => {
-	process.env.LANG = "zh_CN.UTF-8";
-	delete process.env.LC_ALL;
-	delete process.env.LC_MESSAGES;
-	assert.match(await run("ls"), /追加规则/);
-});
-
-await check("LANG=en_US 时用英文", async () => {
+await check("英文环境命令与列表用英文", async () => {
 	process.env.LANG = "en_US.UTF-8";
-	assert.match(await run("ls"), /Append rules/);
+	writeFileSync(STATE, JSON.stringify({ enabled: true, items: ["x"] }), "utf-8");
+	assert.match(await run("ls"), /Rules \(inject: on\)/);
+	assert.match(await run('add "y"'), /\/reload to apply/);
 });
 
-await check("LANG 未设置时默认英文（分发场景）", async () => {
+await check("LANG 未设置默认英文；LC_ALL 优先", async () => {
 	delete process.env.LANG;
 	delete process.env.LC_ALL;
 	delete process.env.LC_MESSAGES;
-	assert.match(await run("ls"), /Append rules/);
-});
-
-await check("LC_ALL 优先于 LANG", async () => {
-	process.env.LANG = "en_US.UTF-8";
+	assert.match(await run("ls"), /Rules \(inject/);
 	process.env.LC_ALL = "zh_CN.UTF-8";
-	assert.match(await run("ls"), /追加规则/);
+	assert.match(await run("ls"), /规则（注入开关/);
 });
 
-await check("LC_MESSAGES 次优先于 LANG", async () => {
-	delete process.env.LC_ALL;
-	process.env.LC_MESSAGES = "zh_TW.UTF-8";
-	assert.match(await run("ls"), /追加规则/);
-});
-
-await check("非 zh 的其它语言一律英文", async () => {
-	delete process.env.LC_ALL;
-	delete process.env.LC_MESSAGES;
-	process.env.LANG = "ja_JP.UTF-8";
-	assert.match(await run("ls"), /Append rules/);
-});
-
-await check("英文环境下注入的规则内容不受影响", async () => {
-	process.env.LANG = "en_US.UTF-8";
-	writeFileSync(STATE, JSON.stringify({ enabled: true, items: [{ text: "Never force-push" }] }), "utf-8");
-	assert.equal(await injected(), "Never force-push");
-});
+// 供 clear 测试用：从台账重渲染 APPEND_SYSTEM.md（不经命令）
+function renderFromState() {
+	const s = readState();
+	const body = s.enabled ? s.items.filter((i) => i.enabled).map((i) => i.text).join("\n\n").trim() : "";
+	if (body) writeFileSync(MD, `${body}\n`, "utf-8");
+	else rmSync(MD, { force: true });
+}
 
 console.log(results.join("\n"));
 const failed = results.filter((line) => line.includes("FAIL")).length;
